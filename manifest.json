@@ -1,0 +1,41 @@
+{
+   "author": "なかむーら",
+   "homepage_url": "https://twitter.com/nakamura_keng0",
+   "description": "ニコ生ビュワー",
+   "action": {
+      "default_title": "NicoViewer",
+      "default_popup":"popup.html"
+   },
+   "content_scripts": [ {
+      "css": [ "style.css" ],
+      "js": [ "jquery-3.1.1.min.js", "jimp.min.js", "main.js", "capture.js" ],
+      "matches": [ "https://live.nicovideo.jp/watch/*", "https://live2.nicovideo.jp/watch/*" ]
+   } ],
+   "background": {
+      "service_worker": "background.js"
+   },  
+   "icons": {
+      "64": "images/icon.png"
+   },
+   "manifest_version": 3,
+   "name": "NicoViewer",
+   "version": "0.1.8",
+   "web_accessible_resources": [
+      { 
+         "resources": ["images/*"],
+         "matches": ["<all_urls>"]
+      }
+   ],
+   "side_panel": {
+     "default_path": "sidebar.html"
+   },
+   "permissions": [
+      "activeTab", "tabs", "downloads", "sidePanel"
+   ],
+   "host_permissions": [
+      "<all_urls>",
+      "file://*/*",
+      "https://papi.live.nicovideo.jp/*",
+      "http://www.chikuwachan.com/*"
+   ]
+}

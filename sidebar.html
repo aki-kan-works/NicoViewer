@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>popup</title>
+  <link rel="stylesheet" href="./bootstrap.min.css">
+  <link rel="stylesheet" href="./loaders.min.css">
+  <script src="./jquery-3.1.1.min.js"></script>
+  <script src="./bootstrap.min.js"></script>
+  <script src="./popup.js"></script>
+  <style>
+    body{
+      /* min-width: 430px; */
+      height: auto;
+      font-size: 0.8rem;
+      font-family: ヒラギノ角ゴシック;
+      overflow-y: scroll;
+    }
+    a,a:hover{
+      color: black;
+      text-decoration: none;
+    }
+    .userLink:hover{
+      text-decoration: underline;
+    }
+    .liveRow:hover{
+      background-color: #eee;
+    }
+    .liveList{
+      /* max-height: 560px; */
+      overflow-x: hidden;
+    }
+    .ball-pulse > div {
+      background-color: #cccccc;
+    }
+    #svg-heart{
+      height:16px;
+    }
+    #svg-heart>path{
+      fill:orangered;
+    }
+    #svg-clock{
+      height:16px;
+    }
+    #svg-clock>path{
+      fill:silver;
+    }
+    #favOnlyIcon{
+        cursor: pointer;
+    }
+    #favOnlyIcon.on>path{
+      fill:orangered;
+    }
+    #favOnlyIcon.off>path{
+      fill:darkgray;
+    }
+    .closeButton:hover{
+        background-color: lightgray!important;
+    }
+    
+  </style>
+</head>
+<body>
+  <div style="display: flex;flex-direction: column;">
+    <button class="closeButton"
+         style="width: 1.4rem;
+                float: left;
+                display: flex;
+                align-items: center;
+                background-color: #ededed;
+                padding:0.2rem;
+                border-color: lightgray;
+                position: fixed;
+                height: 100vh;">
+        <svg style="height:1.2rem;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--!Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2024 Fonticons, Inc.-->
+            <path style="fill:grey;" d="M310.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L242.7 256 73.4 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192z"/>
+        </svg>
+    </button>
+    <div style="padding-left:1.4rem;">
+        <ul class="nav nav-pills nav-fill" style="position: sticky; top: 0; z-index:5;">
+            <li id="menu1" class="nav-item" style="background-color: white;">
+                <a href="#tab1" class="nav-link active" data-toggle="tab">
+                <svg id="svg-heart" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="heart" class="svg-inline--fa fa-heart fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M462.3 62.6C407.5 15.9 326 24.3 275.7 76.2L256 96.5l-19.7-20.3C186.1 24.3 104.5 15.9 49.7 62.6c-62.8 53.6-66.1 149.8-9.9 207.9l193.5 199.8c12.5 12.9 32.8 12.9 45.3 0l193.5-199.8c56.3-58.1 53-154.3-9.8-207.9z"></path></svg>
+                </a>
+            </li>
+            <li id="menu2" class="nav-item" style="background-color: white;">
+                <a href="#tab2" class="nav-link" data-toggle="tab">
+                <img style="height:24px; width:24px;" src="images/live.svg">
+                </a>
+            </li>
+            <li id="menu3" class="nav-item" style="background-color: white;">
+                <a href="#tab3" class="nav-link" data-toggle="tab">
+                <svg id="svg-clock" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="clock" class="svg-inline--fa fa-clock fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M256,8C119,8,8,119,8,256S119,504,256,504,504,393,504,256,393,8,256,8Zm92.49,313h0l-20,25a16,16,0,0,1-22.49,2.5h0l-67-49.72a40,40,0,0,1-15-31.23V112a16,16,0,0,1,16-16h32a16,16,0,0,1,16,16V256l58,42.5A16,16,0,0,1,348.49,321Z"></path></svg>
+                </a>
+            </li>
+            <li id="menu4" class="nav-item" style="background-color: white;">
+                <a href="#tab4" class="nav-link" data-toggle="tab" style="padding: 5px;">
+                <img style="height:24px; width:24px;" src="images/chikuwa.png">
+                </a>
+            </li>
+        </ul>
+        <div class="tab-content">
+            <div id="tab1" class="tab-pane active">
+                <div id="favoList" class="pl-3 liveList">
+                <div class="loader-inner ball-pulse text-center" style="margin-top:80px; height:140px;">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                </div>
+                </div>
+            </div>
+            <div id="tab2" class="tab-pane">
+                <div id="liveList" class="pl-3 liveList">
+                <div class="loader-inner ball-pulse text-center" style="margin-top:80px; height:140px;">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                </div>
+                </div>
+            </div>
+            <div id="tab3" class="tab-pane">
+                    <svg id="favOnlyIcon" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="heart" class="svg-inline--fa fa-heart fa-w-16 closedIcon on" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" style="
+                        position: fixed;
+                        top: 3rem;
+                        right: 1rem;
+                        height: 2.4rem;
+                        z-index: 10;
+                    "><path fill="currentColor" d="M462.3 62.6C407.5 15.9 326 24.3 275.7 76.2L256 96.5l-19.7-20.3C186.1 24.3 104.5 15.9 49.7 62.6c-62.8 53.6-66.1 149.8-9.9 207.9l193.5 199.8c12.5 12.9 32.8 12.9 45.3 0l193.5-199.8c56.3-58.1 53-154.3-9.8-207.9z"></path></svg>
+                <div id="closedList" class="pl-3 liveList" offset="0">
+                <div class="loader-inner ball-pulse text-center" style="margin-top:80px; height:140px;">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                </div>
+                </div>
+            </div>
+            <div id="tab4" class="tab-pane">
+                <div id="chikuranList" class="pl-3 liveList">
+                <div class="loader-inner ball-pulse text-center" style="margin-top:80px; height:140px;">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                </div>
+                </div>
+            </div>
+        </div>
+    </div>
+  </div>
+</body>
+</html>
