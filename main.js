@@ -521,6 +521,16 @@ function init(){
 		return false;
 	});
 
+	// --- スライダーツールチップ: ドラッグ中のみ表示、離したら消す ---
+	// mouseup はスライダー外で離した場合も document で確実に受け取る
+	$('#commentOpac, #haisinVolumeSize').on('mousedown touchstart', function(){
+		var $label = $(this).closest('.___vol-size-control___');
+		$label.addClass('dragging');
+		$(document).one('mouseup touchend', function(){
+			$label.removeClass('dragging');
+		});
+	});
+
 	// --- 拡張メニュー: 画面反転（配信映像を左右反転） ---
 	$('#radio-hanten').click(function(){
 		if(isChecked(this)){

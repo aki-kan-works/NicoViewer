@@ -49,22 +49,26 @@ $(function () {
 		loadFavoList();
 		$(window).off();
 		clearRefresh();
+		window.scrollTo(0, 0);
 	});
 	$('#menu2').click(function () {
 		loadLiveList();
 		$(window).off();
 		clearRefresh();
+		window.scrollTo(0, 0);
 	});
 	$('#menu3').click(function () {
 		$('#closedList').attr('offset', 0);
 		loadClosedList();
 		initClosedListMore();
 		clearRefresh();
+		window.scrollTo(0, 0);
 	});
 	$('#menu4').click(function () {
 		loadChikuranList();
 		$(window).off();
 		clearRefresh();
+		window.scrollTo(0, 0);
 	});
 
 	$('.closeButton').off().click(() => {
