@@ -129,7 +129,7 @@ $(function () {
 	});
 
 	$('.closeButton').off().click(() => {
-		close();
+		window.close();
 	});
 });
 
@@ -280,7 +280,7 @@ function runRefreshCycle(remainingMs) {
 	// バーを現在の進捗位置にリセット後、残り時間分だけ linear で 100% まで伸ばす
 	$bar.css({ transition: 'none', width: `${progressPct}%` });
 	$barContainer.show();
-	$bar[0].offsetWidth; // force reflow
+	void ($bar[0] && $bar[0].offsetWidth); // force reflow
 	$bar.css({ transition: `width ${remainingMs}ms linear`, width: '100%' });
 
 	refreshStartTime = Date.now();
