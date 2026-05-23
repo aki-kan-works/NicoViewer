@@ -8,6 +8,10 @@ const API_FOLLOW_ONAIR  = 'https://live.nicovideo.jp/front/api/pages/follow/v1/p
 const API_FOLLOW_CLOSED = 'https://live.nicovideo.jp/front/api/pages/follow/v1/programs?status=closed&offset=';
 const URL_CHIKURAN       = 'http://www.chikuwachan.com/live/NCU/';
 
+// 自動更新の間隔
+const FAVO_REFRESH_MS     = 30 * 1000;      // お気に入り: 30秒
+const CHIKURAN_REFRESH_MS = 1 * 60 * 1000;  // ちくらん: 1分
+
 // 画像取得失敗時のフォールバック
 const FALLBACK_THUMBNAIL = 'https://nicolive.cdn.nimg.jp/tsthumb/thumbnail/241026/01/21/pg54488467505735_640_360.jpg';
 const FALLBACK_USER_ICON = 'https://secure-dcdn.cdn.nimg.jp/comch/community-icon/64x64/.jpg?';
@@ -24,6 +28,15 @@ let liveList;        // 配信中番組のキャッシュ（menu1 取得分を m
 let tm;              // サムネのフレーム取得用インターバル
 let tmHover;         // ホバー中アニメーション用インターバル
 const frameBuffers = new Map();
+
+// 自動更新タイマー関連
+let refreshTimer = null;          // setTimeout ハンドル
+let isPaused = false;             // 一時停止中かどうか
+let pausedRemainingMs = 0;        // 一時停止時点での残り時間
+let refreshStartTime = 0;         // 現在サイクル開始時刻
+let currentIntervalMs = 0;        // 現在の更新間隔
+let currentLoadFn = null;         // 現在の更新関数
+let currentPauseOnScroll = false; // スクロール時に一時停止するか
 
 // ===== 初期化 =====
 
@@ -43,32 +56,76 @@ $(function () {
 		window.open($(this).attr('url'));
 	});
 
+	// favoList: ホバーでお気に入り解除アイコン表示 / クリックで解除
+	$('#favoList').on('mouseenter', '.liveLink', function () {
+		$(this).find('.unfavoIcon').show();
+	}).on('mouseleave', '.liveLink', function () {
+		$(this).find('.unfavoIcon').hide();
+	}).on('click', '.unfavo', function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		notFavolist.push($(this).attr('userId'));
+		localStorage.setItem('notFavolist', JSON.stringify(notFavolist));
+		$(this).closest('a').animate({ opacity: 0 }, 500, function () { $(this).hide(); });
+	});
+
+	// liveList: ホバーでお気に入り追加アイコン表示 / クリックで追加
+	$('#liveList').on('mouseenter', '.liveLink', function () {
+		$(this).find('.favoIcon').show();
+	}).on('mouseleave', '.liveLink', function () {
+		$(this).find('.favoIcon').hide();
+	}).on('click', '.favo', function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		notFavolist = notFavolist.filter(a => a !== $(this).attr('userId'));
+		localStorage.setItem('notFavolist', JSON.stringify(notFavolist));
+		$(this).closest('a').animate({ opacity: 0 }, 500, function () { $(this).hide(); });
+	});
+
+	// closedList: ホバーでフィルタアイコン表示
+	$('#closedList').on('mouseenter', '.liveRow', function () {
+		$(this).find('.filterIcon').show();
+	}).on('mouseleave', '.liveRow', function () {
+		$(this).find('.filterIcon').hide();
+	});
+
 	loadFavoList();
+	startAutoRefresh(loadFavoList, FAVO_REFRESH_MS); // 初期タブ（favo）の自動更新を開始
 
 	$('#menu1').click(function () {
-		loadFavoList();
-		$(window).off();
 		clearRefresh();
+		stopAutoRefresh();
+		$(window).off(); // closedList の無限スクロールハンドラを解除
 		window.scrollTo(0, 0);
+		$('#favoList').scrollTop(0);
+		loadFavoList();
+		startAutoRefresh(loadFavoList, FAVO_REFRESH_MS);
 	});
 	$('#menu2').click(function () {
-		loadLiveList();
-		$(window).off();
 		clearRefresh();
+		stopAutoRefresh();
+		$(window).off();
 		window.scrollTo(0, 0);
+		$('#liveList').scrollTop(0);
+		loadLiveList();
 	});
 	$('#menu3').click(function () {
-		$('#closedList').attr('offset', 0);
+		clearRefresh();
+		stopAutoRefresh();
+		$(window).off();
+		window.scrollTo(0, 0);
+		$('#closedList').scrollTop(0).attr('offset', 0);
 		loadClosedList();
 		initClosedListMore();
-		clearRefresh();
-		window.scrollTo(0, 0);
 	});
 	$('#menu4').click(function () {
-		loadChikuranList();
-		$(window).off();
 		clearRefresh();
+		stopAutoRefresh();
+		$(window).off();
 		window.scrollTo(0, 0);
+		$('#chikuranList').scrollTop(0);
+		loadChikuranList();
+		startAutoRefresh(loadChikuranList, CHIKURAN_REFRESH_MS, { pauseOnScroll: true });
 	});
 
 	$('.closeButton').off().click(() => {
@@ -113,6 +170,7 @@ function sideIcon(cls, svg, name) {
 }
 
 // ニコ生番組の1行HTMLを生成（variant: 'favo' | 'live' | 'closed'）
+// data-url / data-begin-at を付与し、差分更新のキーとして使用する
 function buildNicoRow(info, variant) {
 	const p = getProvider(info);
 	const now = Date.now();
@@ -133,7 +191,7 @@ function buildNicoRow(info, variant) {
 	}
 
 	return `
-		<a href="${info.watchPageUrl}" class="liveLink"${anchorStyle ? ` style="${anchorStyle}"` : ''}>
+		<a href="${info.watchPageUrl}" class="liveLink" data-url="${info.watchPageUrl}" data-begin-at="${info.beginAt}"${anchorStyle ? ` style="${anchorStyle}"` : ''}>
 			<div class="row mt-1 mb-1 pt-1 pb-1 pr-1 d-flex align-items-center liveRow">
 				<div class="thum col-4" style="max-width:9.5rem;">
 					<img class="live" src="${info.listingThumbnail}" style="height:64px; background-color:#eee;">
@@ -151,10 +209,10 @@ function buildNicoRow(info, variant) {
 									${p.name}
 						</span>
 					</div>
-					<div class="row pr-3 pb-1" style="font-weight:bold;${titleExtra}">
+					<div class="row pr-3 pb-1 prog-title" style="font-weight:bold;${titleExtra}">
 						${info.title}
 					</div>
-					<div class="row" style="font-size:10px; color:#252525">
+					<div class="row elapsed" style="font-size:10px; color:#252525">
 						${elapsed}
 					</div>
 				</div>
@@ -184,8 +242,9 @@ function showListError($container, message) {
 	`);
 }
 
-// ===== サムネイルのホバーアニメーション =====
+// ===== サムネイルアニメーション用リソース管理 =====
 
+// アニメーション用インターバル・フレームバッファを全クリア（タブ切り替え時に呼ぶ）
 function clearRefresh() {
 	clearInterval(tm);
 	clearInterval(tmHover);
@@ -193,12 +252,114 @@ function clearRefresh() {
 	frameBuffers.clear();
 }
 
-function startLiveAnimation(containerId) {
-	clearRefresh();
+// ===== 自動更新 / プログレスバー =====
 
+// 指定の一覧を intervalMs ごとに自動更新し、プログレスバーで残り時間を可視化する
+// options.pauseOnScroll = true のとき、スクロールがトップ以外では一時停止する
+function startAutoRefresh(loadFn, intervalMs, options = {}) {
+	stopAutoRefresh();
+	currentLoadFn = loadFn;
+	currentIntervalMs = intervalMs;
+	currentPauseOnScroll = options.pauseOnScroll || false;
+	isPaused = false;
+
+	if (currentPauseOnScroll) {
+		$(window).on('scroll.autoRefreshPause', onScrollPause);
+		$('#chikuranList').on('scroll.autoRefreshPause', onScrollPause);
+	}
+
+	runRefreshCycle(intervalMs);
+}
+
+// 残り remainingMs ミリ秒でカウントダウン開始（再開時にも使用）
+function runRefreshCycle(remainingMs) {
+	const $bar = $('#autoRefreshProgress');
+	const $barContainer = $('#autoRefreshProgressBar');
+	const progressPct = ((currentIntervalMs - remainingMs) / currentIntervalMs) * 100;
+
+	// バーを現在の進捗位置にリセット後、残り時間分だけ linear で 100% まで伸ばす
+	$bar.css({ transition: 'none', width: `${progressPct}%` });
+	$barContainer.show();
+	$bar[0].offsetWidth; // force reflow
+	$bar.css({ transition: `width ${remainingMs}ms linear`, width: '100%' });
+
+	refreshStartTime = Date.now();
+	pausedRemainingMs = remainingMs;
+
+	refreshTimer = setTimeout(function () {
+		// 更新前にリストをトップへ戻す
+		window.scrollTo(0, 0);
+		$('div.liveList').scrollTop(0);
+		currentLoadFn();
+		runRefreshCycle(currentIntervalMs);
+	}, remainingMs);
+}
+
+// カウントダウンを一時停止（スクロール離脱時）
+function pauseAutoRefresh() {
+	if (isPaused || !refreshTimer) return;
+	isPaused = true;
+
+	const elapsed = Date.now() - refreshStartTime;
+	pausedRemainingMs = Math.max(0, pausedRemainingMs - elapsed);
+
+	clearTimeout(refreshTimer);
+	refreshTimer = null;
+
+	// プログレスバーをその場で止める
+	const $bar = $('#autoRefreshProgress');
+	const progressPct = ((currentIntervalMs - pausedRemainingMs) / currentIntervalMs) * 100;
+	$bar.css({ transition: 'none', width: `${progressPct}%` });
+}
+
+// カウントダウンを再開（スクロールがトップへ戻ったとき）
+function resumeAutoRefresh() {
+	if (!isPaused) return;
+	isPaused = false;
+	runRefreshCycle(pausedRemainingMs);
+}
+
+// スクロール位置を監視し、トップ以外で一時停止、トップへ戻ったら再開
+function onScrollPause() {
+	const atTop = window.scrollY === 0 && $('#chikuranList').scrollTop() === 0;
+	if (!atTop && !isPaused) {
+		pauseAutoRefresh();
+	} else if (atTop && isPaused) {
+		resumeAutoRefresh();
+	}
+}
+
+// 自動更新を完全停止してプログレスバーを隠す
+function stopAutoRefresh() {
+	clearTimeout(refreshTimer);
+	refreshTimer = null;
+	isPaused = false;
+	pausedRemainingMs = 0;
+	currentLoadFn = null;
+	currentPauseOnScroll = false;
+
+	$(window).off('scroll.autoRefreshPause');
+	$('#chikuranList').off('scroll.autoRefreshPause');
+
+	$('#autoRefreshProgress').css({ transition: 'none', width: '0%' });
+	$('#autoRefreshProgressBar').hide();
+}
+
+// ===== サムネイルのホバーアニメーション =====
+
+// containerId 配下の img.live を対象にフレームをバッファリングし、ホバー時にアニメーション再生する
+// 差分更新で追加された新規行も delegation により自動でアニメーション対象となる
+function startLiveAnimation(containerId) {
+	// 既存のフェッチインターバルを停止（frameBuffers は保持する — 差分更新時に既存データを活かすため）
+	clearInterval(tm);
+	clearInterval(tmHover);
+
+	// まだ登録されていない img.live 要素だけ frameBuffers に追加
 	$(`${containerId} img.live`).each((i, el) => {
-		el.setAttribute('data-original-src', el.src.replace(/\?t=\d+$/, ''));
-		frameBuffers.set(el, { urls: [], idx: 0, lastSize: 0 });
+		if (!frameBuffers.has(el)) {
+			el.setAttribute('data-original-src', el.src.replace(/\?t=\d+$/, ''));
+			frameBuffers.set(el, { urls: [], idx: 0, lastSize: 0 });
+		}
 	});
 
 	async function fetchAllFrames() {
@@ -226,87 +387,95 @@ function startLiveAnimation(containerId) {
 	fetchAllFrames();
 	tm = setInterval(fetchAllFrames, 2000);
 
-	$(`${containerId} .liveLink`).on('mouseenter.liveAnim', function() {
-		const img = $(this).find('img.live')[0];
-		if (!img) return;
+	// 委譲バインド: 差分更新で後から追加された行にも有効
+	$(containerId).off('.liveAnim')
+		.on('mouseenter.liveAnim', '.liveLink', function () {
+			const img = $(this).find('img.live')[0];
+			if (!img) return;
 
-		clearInterval(tmHover);
-		$(`${containerId} img.live`).removeAttr('data-hovered');
-		img.dataset.hovered = '1';
+			clearInterval(tmHover);
+			$(`${containerId} img.live`).removeAttr('data-hovered');
+			img.dataset.hovered = '1';
 
-		const buf = frameBuffers.get(img);
-		if (buf && buf.urls.length > 0) {
-			buf.idx = 0;
-			img.src = buf.urls[0];
-		}
-
-		tmHover = setInterval(() => {
 			const buf = frameBuffers.get(img);
-			if (!buf || buf.urls.length === 0) return;
-			buf.idx = (buf.idx + 1) % buf.urls.length;
-			img.src = buf.urls[buf.idx];
-		}, 500);
-	});
+			if (buf && buf.urls.length > 0) {
+				buf.idx = 0;
+				img.src = buf.urls[0];
+			}
 
-	$(`${containerId} .liveLink`).on('mouseleave.liveAnim', function() {
-		const img = $(this).find('img.live')[0];
-		if (!img) return;
-		clearInterval(tmHover);
-		delete img.dataset.hovered;
-		const buf = frameBuffers.get(img);
-		if (buf && buf.urls.length > 0) {
-			img.src = buf.urls[buf.urls.length - 1];
-		}
-	});
+			tmHover = setInterval(() => {
+				const buf = frameBuffers.get(img);
+				if (!buf || buf.urls.length === 0) return;
+				buf.idx = (buf.idx + 1) % buf.urls.length;
+				img.src = buf.urls[buf.idx];
+			}, 500);
+		})
+		.on('mouseleave.liveAnim', '.liveLink', function () {
+			const img = $(this).find('img.live')[0];
+			if (!img) return;
+			clearInterval(tmHover);
+			delete img.dataset.hovered;
+			const buf = frameBuffers.get(img);
+			if (buf && buf.urls.length > 0) {
+				img.src = buf.urls[buf.urls.length - 1];
+			}
+		});
 }
 
 // ===== お気に入りフォロー（配信中） =====
+
+// favoList を差分更新する（追加・削除・タイトル/経過時間の更新）
+function diffUpdateFavoList(newList) {
+	const $container = $('#favoList');
+
+	// スピナーなど liveLink 以外の要素を除去（初回ロード時のローディング表示を消す）
+	$container.children(':not(a.liveLink)').remove();
+
+	if (newList.length === 0) {
+		showListError($container, '放送中の番組がありません。');
+		return;
+	}
+
+	const now = Date.now();
+	const newUrlSet = new Set(newList.map(i => i.watchPageUrl));
+
+	// 新しいリストに存在しない行を削除
+	$container.find('a.liveLink').each(function () {
+		if (!newUrlSet.has($(this).attr('data-url'))) {
+			$(this).remove();
+		}
+	});
+
+	// 既存行の更新 / 新規行の追加
+	for (const info of newList) {
+		const p = getProvider(info);
+		if (notFavolist.includes(p.name)) continue; // お気に入り除外リストはスキップ
+
+		const $existing = $container.find(`a.liveLink[data-url="${info.watchPageUrl}"]`);
+		if ($existing.length) {
+			// タイトルと経過時間をその場で更新
+			$existing.find('.prog-title').html(info.title);
+			$existing.find('.elapsed').text(`${toHms((now - info.beginAt) / 1000)} 経過`);
+		} else {
+			// 新規行: HTMLを追加してサムネイルフォールバックを設定
+			const html = buildNicoRow(info, 'favo');
+			$container.append(html);
+			const img = $container.find(`a.liveLink[data-url="${info.watchPageUrl}"]`).find('img.live')[0];
+			if (img) {
+				$.get(info.listingThumbnail).fail(() => $(img).attr('src', FALLBACK_THUMBNAIL));
+			}
+		}
+	}
+}
 
 function loadFavoList() {
 	$.get(API_FOLLOW_ONAIR)
 	.done(function (res) {
 		if (!res.data) return;
 
-		let list = res.data.programs;
-		liveList = list; // menu2 で再利用するためキャッシュ
-		$('#favoList').empty();
-
-		if (0 == list.length) {
-			showListError($('#favoList'), '放送中の番組がありません。');
-			return;
-		}
-
-		let listHtml = '';
-		let thumbnails = [];
-		for (let info of list) {
-			let name = getProvider(info).name;
-			thumbnails.push(info.listingThumbnail);
-			if (!notFavolist.includes(name)) {
-				listHtml += buildNicoRow(info, 'favo');
-			}
-		}
-		$('#favoList').append(listHtml);
-
-		applyThumbnailFallback('#favoList img.live', thumbnails, FALLBACK_THUMBNAIL);
+		liveList = res.data.programs; // menu2 で再利用するためキャッシュ
+		diffUpdateFavoList(liveList);
 		startLiveAnimation('#favoList');
-
-		// ホバーで「お気に入り解除」アイコンを表示
-		$('#favoList .liveLink').on('mouseenter', function () {
-			$(this).find('.unfavoIcon').show();
-		});
-		$('#favoList .liveLink').on('mouseleave', function () {
-			$(this).find('.unfavoIcon').hide();
-		});
-		// お気に入り解除（除外リストに追加）
-		$('#favoList .unfavo').on('click', function (e) {
-			e.preventDefault();
-			e.stopPropagation();
-			notFavolist.push($(this).attr('userId'));
-			localStorage.setItem('notFavolist', JSON.stringify(notFavolist));
-			$(this).closest('a').animate({ opacity: 0 }, 500, function () {
-				$(this).hide();
-			});
-		});
 	})
 	.fail(function () {
 		showListError($('#favoList'), '番組リストの取得に失敗しました。<br>ニコニコにログインしているか確認してください。');
@@ -319,7 +488,7 @@ function loadLiveList() {
 	let list = liveList;
 	$('#liveList').empty();
 
-	if (0 == list.length) {
+	if (!list || 0 == list.length) {
 		showListError($('#liveList'), '放送中の番組がありません。');
 		return;
 	}
@@ -337,24 +506,7 @@ function loadLiveList() {
 
 	applyThumbnailFallback('#liveList img.live', thumbnails, FALLBACK_THUMBNAIL);
 	startLiveAnimation('#liveList');
-
-	// ホバーで「お気に入り追加」アイコンを表示
-	$('#liveList .liveLink').on('mouseenter', function () {
-		$(this).find('.favoIcon').show();
-	});
-	$('#liveList .liveLink').on('mouseleave', function () {
-		$(this).find('.favoIcon').hide();
-	});
-	// お気に入り追加（除外リストから削除）
-	$('#liveList .favo').on('click', function (e) {
-		e.preventDefault();
-		e.stopPropagation();
-		notFavolist = notFavolist.filter(a => a !== $(this).attr('userId'));
-		localStorage.setItem('notFavolist', JSON.stringify(notFavolist));
-		$(this).closest('a').animate({ opacity: 0 }, 500, function () {
-			$(this).hide();
-		});
-	});
+	// ホバー / お気に入り追加クリック は $(function) 内の委譲バインドで処理
 }
 
 // ===== 終了済み番組履歴 =====
@@ -421,16 +573,9 @@ function loadClosedList() {
 		}
 		$('#closedList').append(listHtml);
 
-		// ホバーでフィルタアイコンを表示
-		$('#closedList .liveRow').on('mouseenter', function () {
-			$(this).find('.filterIcon').show();
-		});
-		$('#closedList .liveRow').on('mouseleave', function () {
-			$(this).find('.filterIcon').hide();
-		});
-
 		applyThumbnailFallback('#closedList img.live', thumbnails, FALLBACK_THUMBNAIL);
 		startLiveAnimation('#closedList');
+		// ホバーでフィルタアイコン表示は $(function) 内の委譲バインドで処理
 
 		// 絞り込み中なら対象外を隠し、件数が少なければ追加読込
 		if (closedFilter) {
@@ -470,74 +615,126 @@ function loadClosedList() {
 
 // ===== ちくらん一覧（外部サイト: ちくわちゃん） =====
 
+// ちくらん1行分のHTMLを生成（差分更新のキーとして data-live-url / data-rank を付与）
+function buildChikuranRow(item) {
+	return `
+		<a href="${item.liveUrl}" class="liveLink" data-live-url="${item.liveUrl}" data-rank="${item.rank}">
+			<div class="row mt-1 mb-1 pt-1 pb-1 pr-1 d-flex align-items-center liveRow">
+				<div class="col-1 p-0 text-center" style="min-width: 30px;">
+					<span class="rank-num" style="font-weight:bold;">${item.rank}</span>
+				</div>
+				<div class="thum col-4 p-0" style="z-index:1; min-width:8.5rem; max-width:8.5rem;">
+					<img loading="lazy" class="live" src="${item.thumbnail}" style="height:64px; background-color:#eee;">
+				</div>
+				<div class="col p-0" style="width: calc(100% - 16rem);">
+					<div class="row" style="font-size:10px; color:#252525; line-height:2rem; align-items: center;">
+						<span class="userLink" url="${item.userLink}">
+							<img loading="lazy" class="user" src="${item.userThumbnail}" style="width:1.5rem; margin-right:.3rem; border-radius:100%; line-height:2rem;">
+						</span>
+						<span style="text-overflow: ellipsis;
+									display: block;
+									width: calc(100% - 2rem);
+									white-space: nowrap;
+									overflow-x: hidden;">
+							${item.username}
+						</span>
+					</div>
+					<div class="row pr-3 pb-1 prog-title" style="font-weight:bold;">${item.title}</div>
+					<div class="row elapsed" style="font-size:10px; color:#252525">${item.elapsed} 経過</div>
+				</div>
+				<div class="col-1 pl-0 text-center" style="min-width: 80px;">
+					<span class="active-count" style="font-weight:bold;">${item.active}</span>
+				</div>
+			</div>
+		</a>
+	`;
+}
+
+// chikuranList を差分更新する（追加・削除・ランク/タイトル/経過時間/アクティブ数の更新）
+function diffUpdateChikuranList(items) {
+	const $container = $('#chikuranList');
+
+	// スピナーなど liveLink 以外の要素を除去
+	$container.children(':not(a.liveLink)').remove();
+
+	if (items.length === 0) {
+		showListError($container, 'ちくらん情報の取得に失敗しました。');
+		return;
+	}
+
+	const newUrlSet = new Set(items.map(i => i.liveUrl));
+
+	// 新しいリストに存在しない行を削除
+	$container.find('a.liveLink').each(function () {
+		if (!newUrlSet.has($(this).attr('data-live-url'))) {
+			$(this).remove();
+		}
+	});
+
+	const newUserThumbnails = [];
+
+	for (const item of items) {
+		const $existing = $container.find(`a.liveLink[data-live-url="${item.liveUrl}"]`);
+		if ($existing.length) {
+			// 既存行をその場で更新
+			$existing.attr('data-rank', item.rank);
+			$existing.find('.rank-num').text(item.rank);
+			$existing.find('.prog-title').text(item.title);
+			$existing.find('.elapsed').text(`${item.elapsed} 経過`);
+			$existing.find('.active-count').text(item.active);
+		} else {
+			// 新規行: HTMLを追加してフレームバッファを登録
+			$container.append(buildChikuranRow(item));
+			const img = $container.find(`a.liveLink[data-live-url="${item.liveUrl}"]`).find('img.live')[0];
+			if (img && !frameBuffers.has(img)) {
+				img.setAttribute('data-original-src', item.thumbnail.replace(/\?t=\d+$/, ''));
+				frameBuffers.set(img, { urls: [], idx: 0, lastSize: 0 });
+			}
+			newUserThumbnails.push(item.userThumbnail);
+		}
+	}
+
+	// ランク順に DOM を並べ直す
+	const $rows = $container.find('a.liveLink').toArray();
+	$rows.sort((a, b) => Number($(a).attr('data-rank')) - Number($(b).attr('data-rank')));
+	$rows.forEach(el => $container.append(el)); // 既存要素を移動して順序を修正
+
+	// 新規行のユーザーサムネイルフォールバック
+	if (newUserThumbnails.length > 0) {
+		applyThumbnailFallback('#chikuranList img.user', newUserThumbnails, FALLBACK_USER_ICON);
+	}
+}
+
 function loadChikuranList() {
 	$.get(URL_CHIKURAN)
 	.done(function (res) {
 		let $page = $(res);
 		let $rank = $page.find('#lives_main .rank').parent();
 
-		$('#chikuranList').empty();
 		if (0 == $rank.length) {
 			showListError($('#chikuranList'), 'ちくらん情報の取得に失敗しました。');
 			return;
 		}
 
+		// DOM からアイテム配列を構築してから diffUpdateChikuranList に渡す
+		const items = [];
 		let rank = 1;
-		let userThumbnails = [];
 		$rank.each(function () {
 			let $info = $(this).closest('.live');
-			let liveUrl = $info.find('.liveurl').attr('href');
-			let userThumbnail = $info.find('.image_user img').data('src') ?? $info.find('.image_user img').attr('src');
-			userThumbnails.push(userThumbnail);
-			let thumbnail = $info.find('.image_live img').data('src') ?? $info.find('.image_live img').attr('src');
-			let username = $info.find('.title').text();
-			let userLink = $info.find('a.siteicon').attr('href');
-			let title = $info.find('.topic .ti').text();
-			let elapsed = $info.find('.progress').text();
-			let active = $info.find('.points .count').text();
-
-			$('#chikuranList').append(`
-				<a href="${liveUrl}" class="liveLink">
-					<div class="row mt-1 mb-1 pt-1 pb-1 pr-1 d-flex align-items-center liveRow">
-						<div class="col-1 p-0 text-center" style="min-width: 30px;">
-							<span style="font-weight:bold;">
-								${rank++}
-							</span>
-						</div>
-						<div class="thum col-4 p-0" style="z-index:1; min-width:8.5rem; max-width:8.5rem;">
-							<img loading="lazy" class="live" src="${thumbnail}" style="height:64px; background-color:#eee;">
-						</div>
-						<div class="col p-0" style="width: calc(100% - 16rem);">
-							<div class="row" style="font-size:10px; color:#252525; line-height:2rem; align-items: center;">
-								<span class="userLink" url="${userLink}">
-									<img loading="lazy" class="user" src="${userThumbnail}" style="width:1.5rem; margin-right:.3rem; border-radius:100%; line-height:2rem;">
-								</span>
-								<span style="text-overflow: ellipsis;
-											display: block;
-											width: calc(100% - 2rem);
-											white-space: nowrap;
-											overflow-x: hidden;">
-									${username}
-								</span>
-							</div>
-							<div class="row pr-3 pb-1" style="font-weight:bold;">
-								${title}
-							</div>
-							<div class="row" style="font-size:10px; color:#252525">
-								${elapsed} 経過
-							</div>
-						</div>
-						<div class="col-1 pl-0 text-center" style="min-width: 80px;">
-							<span style="font-weight:bold;">
-								${active}
-							</span>
-						</div>
-					</div>
-				</a>
-			`);
+			items.push({
+				rank:          rank++,
+				liveUrl:       $info.find('.liveurl').attr('href'),
+				userThumbnail: $info.find('.image_user img').data('src') ?? $info.find('.image_user img').attr('src'),
+				thumbnail:     $info.find('.image_live img').data('src') ?? $info.find('.image_live img').attr('src'),
+				username:      $info.find('.title').text(),
+				userLink:      $info.find('a.siteicon').attr('href'),
+				title:         $info.find('.topic .ti').text(),
+				elapsed:       $info.find('.progress').text(),
+				active:        $info.find('.points .count').text(),
+			});
 		});
 
-		applyThumbnailFallback('#chikuranList img.user', userThumbnails, FALLBACK_USER_ICON);
+		diffUpdateChikuranList(items);
 		startLiveAnimation('#chikuranList');
 	})
 	.fail(function () {
