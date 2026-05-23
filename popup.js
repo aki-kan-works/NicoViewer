@@ -233,6 +233,23 @@ function applyThumbnailFallback(imgSelector, urls, fallback) {
 	});
 }
 
+// 配信中: 開始時刻の新しい順（新着順）
+function sortByBeginAtDesc(programs) {
+	return programs.slice().sort((a, b) => b.beginAt - a.beginAt);
+}
+
+// 終了済み: 終了時刻の新しい順（新着順）
+function sortByEndAtDesc(programs) {
+	return programs.slice().sort((a, b) => b.endAt - a.endAt);
+}
+
+// 一覧 DOM を data-begin-at の新しい順に並べ直す（差分更新後用）
+function reorderDomByBeginAtDesc($container) {
+	const $rows = $container.find('a.liveLink').toArray();
+	$rows.sort((a, b) => Number($(b).attr('data-begin-at')) - Number($(a).attr('data-begin-at')));
+	$rows.forEach(el => $container.append(el));
+}
+
 // 取得失敗時の共通メッセージ表示
 function showListError($container, message) {
 	$container.html(`
@@ -466,6 +483,8 @@ function diffUpdateFavoList(newList) {
 			}
 		}
 	}
+
+	reorderDomByBeginAtDesc($container);
 }
 
 function loadFavoList() {
@@ -473,7 +492,7 @@ function loadFavoList() {
 	.done(function (res) {
 		if (!res.data) return;
 
-		liveList = res.data.programs; // menu2 で再利用するためキャッシュ
+		liveList = sortByBeginAtDesc(res.data.programs); // menu2 で再利用するためキャッシュ
 		diffUpdateFavoList(liveList);
 		startLiveAnimation('#favoList');
 	})
@@ -554,7 +573,7 @@ function loadClosedList() {
 	.done(function (res) {
 		if (!res.data) return;
 
-		let list = res.data.programs;
+		let list = sortByEndAtDesc(res.data.programs);
 		if (0 == offset) {
 			$('#closedList').empty();
 		}
