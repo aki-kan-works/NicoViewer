@@ -222,14 +222,16 @@ function buildNicoRow(info, variant) {
 	`;
 }
 
-// 一覧内のサムネイル読み込み失敗時にフォールバック画像を差し込む
-// urls は対象 img と同順の URL 配列（先頭から消費する）
-function applyThumbnailFallback(imgSelector, urls, fallback) {
-	$(imgSelector).each((i, el) => {
-		$.get(urls[0]).fail(() => {
-			$(el).attr('src', fallback);
+// 一覧内の img 読み込み失敗時にフォールバック画像を差し込む（error イベントで判定）
+function bindThumbnailFallback($imgs, fallback) {
+	$imgs.each(function () {
+		if (this.dataset.fallbackBound === '1') return;
+		this.dataset.fallbackBound = '1';
+		$(this).on('error.thumbFallback', function () {
+			if (this.src !== fallback) {
+				this.src = fallback;
+			}
 		});
-		urls.shift();
 	});
 }
 
@@ -261,11 +263,18 @@ function showListError($container, message) {
 
 // ===== サムネイルアニメーション用リソース管理 =====
 
+// 表示中でない blob URL のみ revoke する（表示中 URL の破棄で欠け画像になるのを防ぐ）
+function revokeBufferedUrl(el, url) {
+	if (!url) return;
+	if (el.src === url) return;
+	URL.revokeObjectURL(url);
+}
+
 // アニメーション用インターバル・フレームバッファを全クリア（タブ切り替え時に呼ぶ）
 function clearRefresh() {
 	clearInterval(tm);
 	clearInterval(tmHover);
-	frameBuffers.forEach(buf => buf.urls.forEach(u => URL.revokeObjectURL(u)));
+	frameBuffers.forEach((buf, el) => buf.urls.forEach(u => revokeBufferedUrl(el, u)));
 	frameBuffers.clear();
 }
 
@@ -366,7 +375,12 @@ function stopAutoRefresh() {
 
 // containerId 配下の img.live を対象にフレームをバッファリングし、ホバー時にアニメーション再生する
 // 差分更新で追加された新規行も delegation により自動でアニメーション対象となる
-function startLiveAnimation(containerId) {
+// options.fetchIntervalMs … フレーム取得間隔（省略時 2000ms）
+// options.fetchBatchSize … 同時 fetch 数（省略時 4）
+function startLiveAnimation(containerId, options = {}) {
+	const fetchIntervalMs = options.fetchIntervalMs || 2000;
+	const fetchBatchSize = options.fetchBatchSize || 4;
+
 	// 既存のフェッチインターバルを停止（frameBuffers は保持する — 差分更新時に既存データを活かすため）
 	clearInterval(tm);
 	clearInterval(tmHover);
@@ -379,30 +393,45 @@ function startLiveAnimation(containerId) {
 		}
 	});
 
+	async function fetchFrame(el) {
+		const buf = frameBuffers.get(el);
+		if (!buf) return;
+		const src = el.getAttribute('data-original-src');
+		if (!src) return;
+		try {
+			const res = await fetch(src + '?t=' + Date.now());
+			if (!res.ok) return;
+			const blob = await res.blob();
+			if (blob.size === buf.lastSize) return;
+			buf.lastSize = blob.size;
+			const url = URL.createObjectURL(blob);
+			buf.urls.push(url);
+			if (buf.urls.length > 5) revokeBufferedUrl(el, buf.urls.shift());
+			if (el.dataset.hovered !== '1') {
+				el.src = url;
+			}
+		} catch (e) {}
+	}
+
 	async function fetchAllFrames() {
 		const imgs = $(`${containerId} img.live`).toArray();
-		await Promise.all(imgs.map(async el => {
-			const buf = frameBuffers.get(el);
-			if (!buf) return;
-			const src = el.getAttribute('data-original-src');
-			try {
-				const res = await fetch(src + '?t=' + Date.now());
-				if (!res.ok) return;
-				const blob = await res.blob();
-				if (blob.size === buf.lastSize) return;
-				buf.lastSize = blob.size;
-				const url = URL.createObjectURL(blob);
-				buf.urls.push(url);
-				if (buf.urls.length > 5) URL.revokeObjectURL(buf.urls.shift());
-				if (el.dataset.hovered !== '1') {
-					el.src = url;
-				}
-			} catch(e) {}
-		}));
+		for (let i = 0; i < imgs.length; i += fetchBatchSize) {
+			const batch = imgs.slice(i, i + fetchBatchSize);
+			await Promise.all(batch.map(fetchFrame));
+		}
 	}
 
 	fetchAllFrames();
-	tm = setInterval(fetchAllFrames, 2000);
+	tm = setInterval(fetchAllFrames, fetchIntervalMs);
+
+	// blob URL が無効化された場合は元の CDN URL に戻す
+	$(containerId).off('error.liveAnimBlob', 'img.live')
+		.on('error.liveAnimBlob', 'img.live', function () {
+			const original = this.getAttribute('data-original-src');
+			if (original && this.src.startsWith('blob:')) {
+				this.src = original;
+			}
+		});
 
 	// 委譲バインド: 差分更新で後から追加された行にも有効
 	$(containerId).off('.liveAnim')
@@ -477,10 +506,9 @@ function diffUpdateFavoList(newList) {
 			// 新規行: HTMLを追加してサムネイルフォールバックを設定
 			const html = buildNicoRow(info, 'favo');
 			$container.append(html);
-			const img = $container.find(`a.liveLink[data-url="${info.watchPageUrl}"]`).find('img.live')[0];
-			if (img) {
-				$.get(info.listingThumbnail).fail(() => $(img).attr('src', FALLBACK_THUMBNAIL));
-			}
+			const $row = $container.find(`a.liveLink[data-url="${info.watchPageUrl}"]`);
+			bindThumbnailFallback($row.find('img.live'), FALLBACK_THUMBNAIL);
+			bindThumbnailFallback($row.find('img.user'), FALLBACK_USER_ICON);
 		}
 	}
 
@@ -513,17 +541,15 @@ function loadLiveList() {
 	}
 
 	let listHtml = '';
-	let thumbnails = [];
 	for (let info of list) {
 		let name = getProvider(info).name;
-		thumbnails.push(info.listingThumbnail);
 		if (notFavolist.includes(name)) {
 			listHtml += buildNicoRow(info, 'live');
 		}
 	}
 	$('#liveList').append(listHtml);
 
-	applyThumbnailFallback('#liveList img.live', thumbnails, FALLBACK_THUMBNAIL);
+	bindThumbnailFallback($('#liveList img.live'), FALLBACK_THUMBNAIL);
 	startLiveAnimation('#liveList');
 	// ホバー / お気に入り追加クリック は $(function) 内の委譲バインドで処理
 }
@@ -585,14 +611,12 @@ function loadClosedList() {
 		}
 
 		let listHtml = '';
-		let thumbnails = [];
 		for (let info of list) {
-			thumbnails.push(info.listingThumbnail);
 			listHtml += buildNicoRow(info, 'closed');
 		}
 		$('#closedList').append(listHtml);
 
-		applyThumbnailFallback('#closedList img.live', thumbnails, FALLBACK_THUMBNAIL);
+		bindThumbnailFallback($('#closedList img.live'), FALLBACK_THUMBNAIL);
 		startLiveAnimation('#closedList');
 		// ホバーでフィルタアイコン表示は $(function) 内の委譲バインドで処理
 
@@ -686,11 +710,14 @@ function diffUpdateChikuranList(items) {
 	// 新しいリストに存在しない行を削除
 	$container.find('a.liveLink').each(function () {
 		if (!newUrlSet.has($(this).attr('data-live-url'))) {
+			$(this).find('img.live').each((i, el) => {
+				const buf = frameBuffers.get(el);
+				if (buf) buf.urls.forEach(u => revokeBufferedUrl(el, u));
+				frameBuffers.delete(el);
+			});
 			$(this).remove();
 		}
 	});
-
-	const newUserThumbnails = [];
 
 	for (const item of items) {
 		const $existing = $container.find(`a.liveLink[data-live-url="${item.liveUrl}"]`);
@@ -704,12 +731,14 @@ function diffUpdateChikuranList(items) {
 		} else {
 			// 新規行: HTMLを追加してフレームバッファを登録
 			$container.append(buildChikuranRow(item));
-			const img = $container.find(`a.liveLink[data-live-url="${item.liveUrl}"]`).find('img.live')[0];
+			const $row = $container.find(`a.liveLink[data-live-url="${item.liveUrl}"]`);
+			const img = $row.find('img.live')[0];
 			if (img && !frameBuffers.has(img)) {
 				img.setAttribute('data-original-src', item.thumbnail.replace(/\?t=\d+$/, ''));
 				frameBuffers.set(img, { urls: [], idx: 0, lastSize: 0 });
 			}
-			newUserThumbnails.push(item.userThumbnail);
+			bindThumbnailFallback($row.find('img.live'), FALLBACK_THUMBNAIL);
+			bindThumbnailFallback($row.find('img.user'), FALLBACK_USER_ICON);
 		}
 	}
 
@@ -718,10 +747,6 @@ function diffUpdateChikuranList(items) {
 	$rows.sort((a, b) => Number($(a).attr('data-rank')) - Number($(b).attr('data-rank')));
 	$rows.forEach(el => $container.append(el)); // 既存要素を移動して順序を修正
 
-	// 新規行のユーザーサムネイルフォールバック
-	if (newUserThumbnails.length > 0) {
-		applyThumbnailFallback('#chikuranList img.user', newUserThumbnails, FALLBACK_USER_ICON);
-	}
 }
 
 function loadChikuranList() {
@@ -754,7 +779,7 @@ function loadChikuranList() {
 		});
 
 		diffUpdateChikuranList(items);
-		startLiveAnimation('#chikuranList');
+		startLiveAnimation('#chikuranList', { fetchIntervalMs: 5000, fetchBatchSize: 3 });
 	})
 	.fail(function () {
 		showListError($('#chikuranList'), 'ちくらん情報の取得に失敗しました。');
