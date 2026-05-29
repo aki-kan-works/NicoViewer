@@ -8,7 +8,7 @@
    },
    "content_scripts": [ {
       "css": [ "style.css" ],
-      "js": [ "jquery-3.1.1.min.js", "jimp.min.js", "main.js", "capture.js" ],
+      "js": [ "jquery-3.1.1.min.js", "jimp.min.js", "main.js", "capture.js", "tfjs/tf.min.js", "tfjs/body-segmentation.min.js", "personMask.js" ],
       "matches": [ "https://live.nicovideo.jp/watch/*", "https://live2.nicovideo.jp/watch/*" ]
    } ],
    "background": {
@@ -19,11 +19,15 @@
    },
    "manifest_version": 3,
    "name": "NicoViewer",
-   "version": "0.2.0",
+   "version": "0.3.0",
    "web_accessible_resources": [
-      { 
+      {
          "resources": ["images/*"],
          "matches": ["<all_urls>"]
+      },
+      {
+         "resources": ["models/selfie-segmentation/model.json", "models/selfie-segmentation/group1-shard1of1.bin"],
+         "matches": ["https://live.nicovideo.jp/*", "https://live2.nicovideo.jp/*"]
       }
    ],
    "side_panel": {

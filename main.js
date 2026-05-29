@@ -90,14 +90,6 @@ function init(){
 							</div>
 						</div>
 					</div>
-					<!--
-					<div class="___video-low-latency-toggle-button-field___ ___toggle-button-field___">
-						<div class="___caption___ANSPn ___caption___3R7zH">
-							<label class="___label___" for="radio-comment-touka">コメント自動透過</label>
-							<button id="radio-comment-touka" class="___target-btn1___ ___target-btn2___" type="button" data-toggle-mode="state" aria-pressed="false" data-toggle-state="true"></button>
-						</div>
-					</div>
-					-->
 					<div class="___video-low-latency-toggle-button-field___ ___toggle-button-field___">
 						<div class="___caption___ANSPn ___caption___3R7zH">
 							<label class="___label___" for="radio-hide-emotion">ゲーム・ギフト非表示</label>
@@ -108,6 +100,12 @@ function init(){
 						<div class="___caption___ANSPn ___caption___3R7zH">
 							<label class="___label___" for="radio-hanten">画面反転</label>
 							<button id="radio-hanten" class="___target-btn1___ ___target-btn2___" type="button" data-toggle-mode="state" aria-pressed="false" data-toggle-state="true"></button>
+						</div>
+					</div>
+					<div class="___video-low-latency-toggle-button-field___ ___toggle-button-field___">
+						<div class="___caption___ANSPn ___caption___3R7zH">
+							<label class="___label___" for="radio-comment-avoid">人物を避けてコメントを描画</label>
+							<button id="radio-comment-avoid" class="___target-btn1___ ___target-btn2___" type="button" data-toggle-mode="state" aria-pressed="false" data-toggle-state="false"></button>
 						</div>
 					</div>
 				</div>
@@ -544,6 +542,28 @@ function init(){
 		return false;
 	});
 
+	// --- 拡張メニュー: コメント人物避け（人物の上だけコメントを透過。処理本体は personMask.js） ---
+	$('#radio-comment-avoid').click(function(){
+		if(isChecked(this)){
+			$(this).attr('aria-pressed', 'false');
+			if(window.NicoPersonMask) NicoPersonMask.stop();
+		}else{
+			$(this).attr('aria-pressed', 'true');
+			// ワイプ表示中なら強制解除（人物避けとワイプは併用しない）
+			if(isChecked($('#radio-wipeComment'))) $('#radio-wipeComment').click();
+			if(isChecked($('#radio-wipeGame'))) $('#radio-wipeGame').click();
+			if(window.NicoPersonMask){
+				// 準備中/ON/失敗の通知は personMask.js 側のトースト(notify)で表示する
+				NicoPersonMask.start().then(function(ok){
+					// モデル読込/初期化に失敗したらトグルを戻す
+					if(!ok) $('#radio-comment-avoid').attr('aria-pressed', 'false');
+				});
+			}
+		}
+
+		return false;
+	});
+
 	// --- コメント描画拡張: Ctrl+↑/↓ でコメント透過度を5%単位で変更 ---
 	$(window).keydown(function(e){
 		if(event.ctrlKey){
@@ -826,6 +846,12 @@ function initWipe(){
 	let isWipeComment = false;
 	$('#radio-wipeComment').click(function(){
 		wipeComment(false);
+		// ワイプ表示をONにしたら「人物を避けてコメントを描画」を自動OFF（縮小表示中は無意味なため）
+		if(isChecked(this) && window.NicoPersonMask && NicoPersonMask.isRunning()){
+			NicoPersonMask.stop();
+			$('#radio-comment-avoid').attr('aria-pressed', 'false');
+			NicoPersonMask.notify('ワイプ表示中のため「人物を避けてコメントを描画」をOFFにしました。', 4000);
+		}
 		if(!obs_wipeComment){
 			obs_wipeComment = new MutationObserver(records => {
 				$commentLayer.css('transition','all 0ms 0s ease');
@@ -875,6 +901,12 @@ function initWipe(){
 	let isWipeGame = false;
 	$('#radio-wipeGame').click(function(){
 		wipeGame(false);
+		// ワイプ表示をONにしたら「人物を避けてコメントを描画」を自動OFF（縮小表示中は無意味なため）
+		if(isChecked(this) && window.NicoPersonMask && NicoPersonMask.isRunning()){
+			NicoPersonMask.stop();
+			$('#radio-comment-avoid').attr('aria-pressed', 'false');
+			NicoPersonMask.notify('ワイプ表示中のため「人物を避けてコメントを描画」をOFFにしました。', 4000);
+		}
 		if(!obs_wipeGame){
 			obs_wipeGame = new MutationObserver(records => {
 				$gameLayer.css('transition','all 0ms 0s ease');
