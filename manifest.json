@@ -28,6 +28,10 @@
       {
          "resources": ["models/selfie-segmentation/model.json", "models/selfie-segmentation/group1-shard1of1.bin"],
          "matches": ["https://live.nicovideo.jp/*", "https://live2.nicovideo.jp/*"]
+      },
+      {
+         "resources": ["personMaskWorker.js", "tfjs/tf.min.js", "tfjs/body-segmentation.min.js"],
+         "matches": ["https://live.nicovideo.jp/*", "https://live2.nicovideo.jp/*"]
       }
    ],
    "side_panel": {

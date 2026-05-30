@@ -75,7 +75,7 @@ function init(){
 
 					<div class="___video-low-latency-toggle-button-field___ ___toggle-button-field___">
 						<div class="___caption___ANSPn ___caption___3R7zH">
-							<label class="___label___" >音量ブースト（配信音声のみ）</label>
+							<label class="___label___" >映像音量ブースト</label>
 							<div id="labelVolume" class="___vol-size-control___ ${className_tooltip}" data-isolated="false" aria-label="">
 								<!--
 								<span class="___slider___3V5j1 ___slider1___ ___slider2___ ___range___ ___input___" data-min="0" data-max="100" data-step="1" data-value="50">

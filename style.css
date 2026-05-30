@@ -30,7 +30,7 @@
 
 /* メインパネル（トグル5項目: 透過度/音量/ゲーム非表示/画面反転/人物避け が収まる高さ） */
 .___setting-panel-ext___[data-scene=root][data-item-length="5"] {
-    height: 220px;
+    height: 200px;
     /* opacity: 0; */
     /* transition: opacity .16s ease; */
 }
