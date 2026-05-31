@@ -26,7 +26,7 @@
          "matches": ["<all_urls>"]
       },
       {
-         "resources": ["models/selfie-segmentation/model.json", "models/selfie-segmentation/group1-shard1of1.bin"],
+         "resources": ["models/selfie-segmentation/model.json", "models/selfie-segmentation/group1-shard1of1.bin", "models/selfie-segmentation-landscape/model.json", "models/selfie-segmentation-landscape/group1-shard1of1.bin"],
          "matches": ["https://live.nicovideo.jp/*", "https://live2.nicovideo.jp/*"]
       },
       {

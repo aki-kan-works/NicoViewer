@@ -35,7 +35,7 @@ async function handleInit(msg) {
 
     segmenter = await bodySegmentation.createSegmenter(
       bodySegmentation.SupportedModels.MediaPipeSelfieSegmentation,
-      { runtime: 'tfjs', modelType: 'general', modelUrl: msg.modelUrl }
+      { runtime: 'tfjs', modelType: (msg.modelType || 'general'), modelUrl: msg.modelUrl }
     );
 
     // ウォームアップ(WebGLシェーダの事前コンパイル)
