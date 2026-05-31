@@ -108,7 +108,9 @@
   let personMaskC = null, pmctx = null;  // 人物マスク(人物=不透明/背景=透明、膨張・ぼかし済み)
   let emaBuf = null, emaW = 0, emaH = 0; // EMA用アルファバッファ
   let overlayC = null, ovctx = null;     // コメントの上に重ねる人物切り出しcanvas
+  let waitOverlayEl = null;              // 準備中オーバーレイ(映像・コメント上)
   let toastEl = null, toastTm = null;    // 自前トースト(ニコ生スナックバーは再描画で消えるため使わない)
+  let toastLayoutBound = false;
 
   function getVideo() {
     return document.querySelector('[class*="___video-layer___"] video');
@@ -147,23 +149,115 @@
     if (cmActive) deactivateCommentMask();
   }
 
-  // 映像の中央に短く表示する自前トースト。映像コンテナ直下に置き全画面表示中も見えるようにする。ms=0は消さない。
-  function notify(msg, ms) {
-    const video = getVideo();
-    const host = (video && video.parentElement)
+  const WAIT_MSG = '人物マスクを生成しています';
+
+  // 準備中オーバーレイの表示先(コメント層=映像表示域と同サイズで重なる)
+  function getWaitOverlayHost() {
+    return getCommentContainer()
       || document.querySelector('[class*="___video-layer___"]')
-      || document.body;
+      || null;
+  }
+
+  // トーストの位置基準(映像表示域)。マスク対象のコメント層の子に置かないこと。
+  function getToastAnchor() {
+    return getCommentContainer()
+      || document.querySelector('[class*="___video-layer___"]')
+      || null;
+  }
+
+  function positionToast() {
+    if (!toastEl) return;
+    const anchor = getToastAnchor();
+    var cx = null, cy = null;
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        cx = r.left + r.width / 2;
+        cy = r.top + r.height / 2;
+      }
+    }
+    if (cx == null) {
+      cx = window.innerWidth / 2;
+      cy = window.innerHeight / 2;
+    }
+    toastEl.style.left = cx + 'px';
+    toastEl.style.top = cy + 'px';
+  }
+
+  // ネイティブ全画面は body 直下のうち data-browser-fullscreen=ignore 無し要素を非表示にする
+  function bindToastLayoutListeners() {
+    if (toastLayoutBound) return;
+    toastLayoutBound = true;
+    var reposition = function () {
+      if (!toastEl || toastEl.style.opacity === '0') return;
+      positionToast();
+    };
+    window.addEventListener('resize', reposition);
+    document.addEventListener('fullscreenchange', reposition);
+    var fsBtn = document.querySelector('[class*="___fullscreen-button___"]');
+    if (fsBtn && typeof MutationObserver !== 'undefined') {
+      new MutationObserver(reposition).observe(fsBtn, {
+        attributes: true,
+        attributeFilter: ['data-toggle-state']
+      });
+    }
+  }
+
+  function showWaitOverlay() {
+    const host = getWaitOverlayHost();
+    if (!host) return false;
+    if (!waitOverlayEl) {
+      waitOverlayEl = document.createElement('div');
+      waitOverlayEl.id = 'nicoPersonMaskWait';
+      waitOverlayEl.className = 'nico-person-mask-wait';
+      waitOverlayEl.innerHTML =
+        '<div class="nico-person-mask-wait__tint"></div>' +
+        '<div class="nico-person-mask-wait__grid"></div>' +
+        '<div class="nico-person-mask-wait__scan"></div>';
+    }
+    if (waitOverlayEl.parentElement !== host) host.appendChild(waitOverlayEl);
+    requestAnimationFrame(function () {
+      if (waitOverlayEl) waitOverlayEl.classList.add('is-visible');
+    });
+    notify(WAIT_MSG, 0);
+    return true;
+  }
+
+  // complete=true で初回マスク完了時の ON トーストへ切替
+  function hideWaitOverlay(complete) {
+    if (waitOverlayEl) {
+      waitOverlayEl.classList.remove('is-visible');
+      const el = waitOverlayEl;
+      setTimeout(function () {
+        if (el && !el.classList.contains('is-visible')) el.remove();
+      }, 380);
+    }
+    if (complete) {
+      notify('人物を避けてコメントを描画：ON' + (useWorker ? '' : '（互換モード）'), 1500);
+    } else if (toastEl && toastEl.textContent === WAIT_MSG) {
+      toastEl.style.opacity = '0';
+      if (toastTm) { clearTimeout(toastTm); toastTm = null; }
+    }
+  }
+
+  // 映像の中央に短く表示する自前トースト。body固定配置でコメントマスク/人物切り出しの影響を受けない。
+  function notify(msg, ms) {
     if (!toastEl || !document.body.contains(toastEl)) {
       toastEl = document.createElement('div');
       toastEl.id = 'nicoPersonMaskToast';
+      toastEl.setAttribute('data-browser-fullscreen', 'ignore');
       toastEl.style.cssText =
-        'left:50%; top:50%; transform:translate(-50%,-50%); z-index:2147483647;' +
+        'position:fixed; transform:translate(-50%,-50%); z-index:2147483647;' +
         'background:rgba(37,37,37,.92); color:#fff; padding:8px 16px; border-radius:6px;' +
         'font-size:14px; font-family:sans-serif; box-shadow:0 0 8px rgba(0,0,0,.6);' +
         'pointer-events:none; white-space:nowrap; opacity:0; transition:opacity .2s ease;';
+      bindToastLayoutListeners();
     }
-    if (toastEl.parentElement !== host) host.appendChild(toastEl);
-    toastEl.style.position = (host === document.body) ? 'fixed' : 'absolute';
+    if (toastEl.parentElement !== document.body) document.body.appendChild(toastEl);
+    if (!toastEl.getAttribute('data-browser-fullscreen')) {
+      toastEl.setAttribute('data-browser-fullscreen', 'ignore');
+    }
+    positionToast();
     toastEl.textContent = msg;
     toastEl.style.opacity = '1';
     if (toastTm) { clearTimeout(toastTm); toastTm = null; }
@@ -448,6 +542,7 @@
         pmctx.globalCompositeOperation = 'source-over';
       }
     }
+    if (!personReady) hideWaitOverlay(true);
     personReady = true;
 
     syncDrawModeAfterMask();
@@ -760,6 +855,9 @@
 
   // 1ティック分の処理: 重ね描画 +(間隔が来ていれば)人物マスク推定(Worker or メイン)
   function tick(forceDraw, segInterval) {
+    if (running && !personReady && (!waitOverlayEl || !waitOverlayEl.classList.contains('is-visible'))) {
+      showWaitOverlay();
+    }
     const video = getVideo();
     if (!video || video.paused || video.readyState < 2) return;
     const now = performance.now();
@@ -807,8 +905,7 @@
 
   async function start() {
     if (running) return true;
-    const firstLoad = !worker && !segmenter;
-    if (firstLoad) notify('人物を避けてコメントを描画：準備中…', 0);
+    showWaitOverlay();
 
     if (!worker && !segmenter) {
       // 初回: Worker優先。失敗したらメインスレッド推論にフォールバック。
@@ -821,6 +918,7 @@
           await ensureSegmenter();
         } catch (e) {
           console.error(TAG, '初期化失敗:', e);
+          hideWaitOverlay();
           notify('人物を避けてコメントを描画：初期化に失敗しました', 4000);
           return false;
         }
@@ -840,14 +938,15 @@
     motionLevel = 0;
     motionDbgT0 = 0;
     cmActive = false;
+    showWaitOverlay();
     armDrawLoop();
-    notify('人物を避けてコメントを描画：ON' + (useWorker ? '' : '（互換モード）'), 1500);
     console.log(TAG, 'ON (useWorker=' + useWorker + ')');
     return true;
   }
 
   function stop() {
     running = false;
+    hideWaitOverlay();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     if (rvfcId && rvfcVideo && typeof rvfcVideo.cancelVideoFrameCallback === 'function') {
       rvfcVideo.cancelVideoFrameCallback(rvfcId);

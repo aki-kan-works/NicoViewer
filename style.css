@@ -359,3 +359,51 @@
 ;
     position: relative;
 }
+
+/* 人物避け: 準備中オーバーレイ（映像・コメントの上に半透明で重ねる） */
+.nico-person-mask-wait {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2147483646;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+.nico-person-mask-wait.is-visible {
+    opacity: 1;
+}
+.nico-person-mask-wait__tint {
+    position: absolute;
+    inset: 0;
+    background: rgba(14, 14, 16, 0.52);
+}
+.nico-person-mask-wait__grid {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M11 8h2v3h3v2h-3v3h-2v-3H8v-2h3z' fill='rgba(255,255,255,0.11)'/%3E%3C/svg%3E");
+    background-size: 24px 24px;
+    opacity: 0.85;
+}
+.nico-person-mask-wait__scan {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(
+        180deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.02) 35%,
+        rgba(255, 255, 255, 0.07) 50%,
+        rgba(255, 255, 255, 0.02) 65%,
+        transparent 100%
+    );
+    animation: nicoPersonMaskScan 2.8s ease-in-out infinite;
+}
+@keyframes nicoPersonMaskScan {
+    0% { top: -45%; }
+    100% { top: 105%; }
+}
